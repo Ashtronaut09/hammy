@@ -11,7 +11,7 @@
 
 Your meeting notes, handled entirely on your own machine. No cloud, no subscriptions, no recording uploaded to a stranger's server. Just drop an audio file in a folder, run `hammy`, and get structured Markdown notes — summary, key takeaways, action items, and the full timestamped transcript — before you've finished your coffee.
 
-Everything happens locally. Transcription runs on-device using Whisper. Note structuring runs through whatever LLM you already have — Ollama, Claude Code, Codex CLI, or an API key you already own. If you pair it with Ollama you can process a full meeting with zero internet connection, which means it works on a plane, in a basement, or anywhere you'd rather your recordings not leave the room.
+Everything happens locally. Transcription runs on-device using NVIDIA's Parakeet — one of the fastest speech-to-text models available — or Whisper for multilingual recordings. Note structuring runs through whatever LLM you already have — Ollama, Claude Code, Codex CLI, or an API key you already own. If you pair it with Ollama you can process a full meeting with zero internet connection, which means it works on a plane, in a basement, or anywhere you'd rather your recordings not leave the room.
 
 ## How it works
 
@@ -127,8 +127,8 @@ Models are selected during `hammy setup` based on your platform and language pre
 
 | Platform | English (recommended) | Multilingual (recommended) |
 |---|---|---|
-| Mac Silicon | parakeet-tdt-0.6b-v2 (1.2 GB) | whisper-large-v3 (3.1 GB) |
-| NVIDIA GPU | parakeet-tdt-0.6b-v2 (1.2 GB) | faster-whisper-large-v3 (3.1 GB) |
+| Mac Silicon | Parakeet tdt-0.6b-v2 via parakeet-mlx (1.2 GB) | whisper-large-v3 via mlx-whisper (3.1 GB) |
+| NVIDIA GPU | Parakeet tdt-0.6b-v2 via nemo-toolkit (1.2 GB) | faster-whisper-large-v3 (3.1 GB) |
 | AMD GPU | faster-whisper-large-v3-turbo (1.6 GB) | faster-whisper-large-v3 (3.1 GB) |
 | CPU | faster-whisper-medium (1.5 GB) | faster-whisper-medium (1.5 GB) |
 

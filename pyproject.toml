@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mac    = ["mlx-whisper>=0.4", "parakeet-mlx>=0.1"]
-nvidia = ["faster-whisper>=1.0"]
+nvidia = ["faster-whisper>=1.0", "nemo-toolkit[asr]>=2.0"]
 cpu    = ["faster-whisper>=1.0"]
 dev    = ["pytest>=8.0", "pytest-cov"]
 
