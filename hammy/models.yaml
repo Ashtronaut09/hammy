@@ -1,0 +1,113 @@
+version: "2026-02-27"
+# Source: https://huggingface.co/spaces/hf-audio/open_asr_leaderboard
+# Update this file to push new model recommendations to users.
+
+platforms:
+  mac_silicon:
+    english:
+      recommended:
+        id: mlx-community/parakeet-tdt-0.6b-v2
+        package: parakeet-mlx
+        size_gb: 1.2
+        notes: "Fastest on Apple Silicon, English only. ~110x RTF on M4 Pro."
+      alternatives:
+        - id: mlx-community/whisper-large-v3-turbo
+          package: mlx-whisper
+          size_gb: 1.6
+          notes: "Slightly slower but battle-tested."
+        - id: mlx-community/whisper-large-v3
+          package: mlx-whisper
+          size_gb: 3.1
+          notes: "Highest quality, slower."
+    multilingual:
+      recommended:
+        id: mlx-community/whisper-large-v3
+        package: mlx-whisper
+        size_gb: 3.1
+        notes: "Best multilingual accuracy on Apple Silicon."
+      alternatives:
+        - id: mlx-community/whisper-large-v3-turbo
+          package: mlx-whisper
+          size_gb: 1.6
+          notes: "Faster, slightly lower multilingual accuracy."
+
+  nvidia_gpu:
+    english:
+      recommended:
+        id: nvidia/parakeet-tdt-0.6b-v2
+        package: faster-whisper
+        size_gb: 1.2
+        notes: "Fastest English ASR on NVIDIA. RTFx ~3380 at batch 128."
+      alternatives:
+        - id: Systran/faster-whisper-large-v3-turbo
+          package: faster-whisper
+          size_gb: 1.6
+          notes: "Good balance of speed and accuracy."
+        - id: Systran/faster-whisper-large-v3
+          package: faster-whisper
+          size_gb: 3.1
+          notes: "Highest quality."
+    multilingual:
+      recommended:
+        id: Systran/faster-whisper-large-v3
+        package: faster-whisper
+        size_gb: 3.1
+        notes: "Best multilingual on NVIDIA."
+      alternatives:
+        - id: Systran/faster-whisper-large-v3-turbo
+          package: faster-whisper
+          size_gb: 1.6
+
+  amd_gpu:
+    english:
+      recommended:
+        id: Systran/faster-whisper-large-v3-turbo
+        package: faster-whisper
+        size_gb: 1.6
+        notes: "Best balance on AMD. ROCm support via faster-whisper."
+      alternatives:
+        - id: Systran/faster-whisper-medium
+          package: faster-whisper
+          size_gb: 1.5
+    multilingual:
+      recommended:
+        id: Systran/faster-whisper-large-v3
+        package: faster-whisper
+        size_gb: 3.1
+      alternatives:
+        - id: Systran/faster-whisper-large-v3-turbo
+          package: faster-whisper
+          size_gb: 1.6
+
+  cpu:
+    english:
+      recommended:
+        id: Systran/faster-whisper-medium
+        package: faster-whisper
+        size_gb: 1.5
+        notes: "Good speed/accuracy trade-off on CPU."
+      alternatives:
+        - id: Systran/faster-whisper-small
+          package: faster-whisper
+          size_gb: 0.5
+          notes: "Fastest, lower accuracy."
+        - id: Systran/faster-whisper-large-v3-turbo
+          package: faster-whisper
+          size_gb: 1.6
+          notes: "Higher quality, slower on CPU."
+    multilingual:
+      recommended:
+        id: Systran/faster-whisper-medium
+        package: faster-whisper
+        size_gb: 1.5
+      alternatives:
+        - id: Systran/faster-whisper-large-v3-turbo
+          package: faster-whisper
+          size_gb: 1.6
+
+llm:
+  ollama:
+    recommended: llama3.2:3b
+    alternatives:
+      - mistral:7b
+      - gemma3:4b

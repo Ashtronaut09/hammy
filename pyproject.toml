@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hammy"
+version = "0.1.0"
+description = "Transcribe audio files and structure meeting notes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["transcription", "audio", "meeting-notes", "whisper", "cli"]
+
+dependencies = [
+    "requests>=2.28",
+    "questionary>=2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+mac    = ["mlx-whisper>=0.4", "parakeet-mlx>=0.1"]
+nvidia = ["faster-whisper>=1.0"]
+cpu    = ["faster-whisper>=1.0"]
+dev    = ["pytest>=8.0", "pytest-cov"]
+
+[project.scripts]
+hammy = "hammy.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hammy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
