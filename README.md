@@ -9,7 +9,9 @@
   transcribing your meetings, one wheel-spin at a time.
 ```
 
-Hammy transcribes audio files and turns them into structured meeting notes. Drop a recording into a folder, run `hammy`, and get a tidy Markdown file with a summary, key takeaways, and action items — plus the raw timestamped transcript.
+Your meeting notes, handled entirely on your own machine. No cloud, no subscriptions, no recording uploaded to a stranger's server. Just drop an audio file in a folder, run `hammy`, and get structured Markdown notes — summary, key takeaways, action items, and the full timestamped transcript — before you've finished your coffee.
+
+Everything happens locally. Transcription runs on-device using Whisper. Note structuring runs through whatever LLM you already have — Ollama, Claude Code, Codex CLI, or an API key you already own. If you pair it with Ollama you can process a full meeting with zero internet connection, which means it works on a plane, in a basement, or anywhere you'd rather your recordings not leave the room.
 
 ## How it works
 
@@ -17,7 +19,7 @@ Hammy transcribes audio files and turns them into structured meeting notes. Drop
 2. Run `hammy`
 3. Find structured notes in your **stash/** folder
 
-Hammy transcribes locally using Whisper (no audio leaves your machine), then optionally sends the transcript to an LLM to structure it into meeting notes.
+That's it. Hammy figures out the best transcription model for your hardware, auto-detects whatever LLM you have available, and handles the rest.
 
 ## Requirements
 
@@ -90,16 +92,16 @@ hammy check
 
 ## LLM backends
 
-Hammy auto-detects which LLM to use, or you can set one during `hammy setup` or force one with `--llm`.
+Hammy auto-detects which LLM to use, or you can pin one during `hammy setup` or override with `--llm`. The fully offline path is **Ollama** — everything stays on your machine, no API key required.
 
-| Backend | What you need |
-|---|---|
-| `claude_code` | [Claude Code CLI](https://claude.ai/code) installed and signed in |
-| `codex_cli` | [OpenAI Codex CLI](https://github.com/openai/codex) installed and signed in |
-| `ollama` | [Ollama](https://ollama.com) running locally |
-| `anthropic_api` | Anthropic API key (set during `hammy setup`) |
-| `openai_api` | OpenAI API key (set during `hammy setup`) |
-| `none` | No LLM — saves raw timestamped transcript only |
+| Backend | Offline? | What you need |
+|---|---|---|
+| `ollama` | Yes | [Ollama](https://ollama.com) running locally |
+| `claude_code` | No | [Claude Code CLI](https://claude.ai/code) installed and signed in |
+| `codex_cli` | No | [OpenAI Codex CLI](https://github.com/openai/codex) installed and signed in |
+| `anthropic_api` | No | Anthropic API key (set during `hammy setup`) |
+| `openai_api` | No | OpenAI API key (set during `hammy setup`) |
+| `none` | Yes | Nothing — saves raw timestamped transcript only |
 
 ## Output
 
