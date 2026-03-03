@@ -28,7 +28,7 @@ _DEFAULTS: dict[str, Any] = {
     "llm_backend": None,
 
     # LLM-specific settings
-    "ollama_model": "llama3.2:3b",
+    "ollama_model": "qwen2.5:7b",
     "anthropic_api_key": None,
     "openai_api_key": None,
 

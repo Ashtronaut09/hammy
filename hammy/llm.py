@@ -1,5 +1,6 @@
 """LLM backend dispatcher for Hammy."""
 
+import json
 import shutil
 import subprocess
 from typing import Optional
@@ -118,15 +119,38 @@ def structure_with_ollama(transcript: str, source_name: str,
                            duration: str, date_str: str,
                            prompt: str, model: str) -> Optional[str]:
     """Invoke Ollama HTTP API."""
-    full_prompt = _build_prompt(prompt, source_name, duration, date_str, transcript)
+    user_content = (
+        f"Metadata:\n"
+        f"- Date: {date_str}\n"
+        f"- Source: {source_name}\n"
+        f"- Duration: {duration}\n\n"
+        f"Raw Transcript:\n{transcript}"
+    )
     try:
         resp = requests.post(
-            "http://localhost:11434/api/generate",
-            json={"model": model, "prompt": full_prompt, "stream": False},
+            "http://localhost:11434/api/chat",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                "options": {"num_ctx": 32768, "num_predict": 4096},
+                "stream": True,
+            },
+            stream=True,
             timeout=600,
         )
         resp.raise_for_status()
-        output = resp.json().get("response", "").strip()
+        parts = []
+        for raw in resp.iter_lines():
+            if not raw:
+                continue
+            data = json.loads(raw)
+            parts.append(data.get("message", {}).get("content", ""))
+            if data.get("done"):
+                break
+        output = "".join(parts).strip()
         if not output:
             ui.warn("Ollama returned empty output.")
             return None

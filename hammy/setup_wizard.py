@@ -35,9 +35,11 @@ class WizardState:
         self.transcription_model: Optional[str] = None
         self.transcription_package: Optional[str] = None
         self.llm_backend: Optional[str] = None
-        self.ollama_model: str = "llama3.2:3b"
+        _cfg = load_config()
+        _wheel = _cfg.get("wheel_dir")
+        self.ollama_model: str = "qwen2.5:7b"
         self.api_key: Optional[str] = None
-        self.workspace_path: Path = Path.home() / "hammy"
+        self.workspace_path: Path = Path(_wheel).parent if _wheel else Path.home() / "hammy"
         self.update_check_enabled: bool = False
 
 
@@ -201,7 +203,7 @@ def step_llm(state: WizardState):
     if choice == "ollama":
         models_data = _load_models()
         ollama_data = models_data.get("llm", {}).get("ollama", {})
-        rec_model   = ollama_data.get("recommended", "llama3.2:3b")
+        rec_model   = ollama_data.get("recommended", "qwen2.5:7b")
         alts        = ollama_data.get("alternatives", [])
 
         print()
@@ -252,18 +254,42 @@ def step_llm(state: WizardState):
 
 def step_workspace(state: WizardState):
     print()
-    default = str(Path.home() / "hammy")
-    ui.info("Hammy needs two folders: one to drop audio files into (thewheel/)")
-    ui.info("and one where finished notes land (stash/).")
-    print()
+    existing_wheel = load_config().get("wheel_dir")
+    if existing_wheel:
+        current_workspace = Path(existing_wheel).parent
+        ui.info(f"Current workspace: {current_workspace}/")
+        print()
+        change = _ask(
+            questionary.select,
+            "Do you want to change your workspace directory?",
+            choices=[
+                questionary.Choice("No — keep current location", value=False),
+                questionary.Choice("Yes — choose a new location", value=True),
+                questionary.Separator(),
+                questionary.Choice("← Back", value=_BACK),
+            ],
+        )
+        if change == _BACK:
+            return _BACK
+        if not change:
+            state.workspace_path = current_workspace
+            return state
+        print()
+    else:
+        ui.info("Hammy needs two folders: one to drop audio files into (thewheel/)")
+        ui.info("and one where finished notes land (stash/).")
+        print()
     path_str = _ask(
         questionary.text,
-        f"Workspace directory:",
-        default=default,
+        "Workspace directory:",
+        default=str(state.workspace_path),
         validate=lambda v: len(v.strip()) > 0 or "Please enter a path",
     )
     if path_str == _BACK:
         return _BACK
+    # Strip surrounding quotes — users often paste shell-escaped paths like
+    # '/some/path with spaces' and Path() would treat the leading ' as literal.
+    path_str = path_str.strip().strip("'\"")
     state.workspace_path = Path(path_str).expanduser()
     return state
 
@@ -408,7 +434,127 @@ def _apply_wizard_results(state: WizardState) -> None:
 # ── Model data helper ─────────────────────────────────────────────────────────
 
 def _load_models() -> dict[str, Any]:
-    """Load models.yaml: try GitHub first (for setup), fall back to bundled."""
-    from hammy.updater import fetch_remote_models
+    """Load models.yaml: use whichever of remote/bundled is newer."""
+    from hammy.updater import fetch_remote_models, load_bundled_models as _bundled
+    bundled = _bundled()
     remote = fetch_remote_models()
-    return remote if remote is not None else load_bundled_models()
+    if remote is None:
+        return bundled
+    try:
+        from datetime import datetime
+        remote_ver  = datetime.strptime(str(remote.get("version",  "2000-01-01")), "%Y-%m-%d").date()
+        bundled_ver = datetime.strptime(str(bundled.get("version", "2000-01-01")), "%Y-%m-%d").date()
+        return remote if remote_ver > bundled_ver else bundled
+    except ValueError:
+        return remote
+
+
+# ── hammy models command ───────────────────────────────────────────────────────
+
+def run_models_command() -> None:
+    """Interactive LLM backend / Ollama model switcher — `hammy models`."""
+    import shutil as _shutil
+    import subprocess as _sub
+
+    cfg             = load_config()
+    current_backend = cfg.get("llm_backend") or "none"
+    current_model   = cfg.get("ollama_model", "qwen2.5:7b")
+
+    ui.print_splash()
+    ui.section("Switch Model / Backend")
+    print()
+    ui.info(f"  Current backend:  {current_backend}")
+    if current_backend == "ollama":
+        ui.info(f"  Current model:    {current_model}")
+    print()
+
+    claude_detected = bool(_shutil.which("claude"))
+    codex_detected  = bool(_shutil.which("codex"))
+
+    def _label(base, detected):
+        return base + ("  ✓ detected" if detected else "")
+
+    backend = _ask(
+        questionary.select,
+        "Which LLM backend?",
+        choices=[
+            questionary.Choice("Ollama  (local, private, free)",                               value="ollama"),
+            questionary.Choice(_label("Claude Code CLI  (Claude subscription)", claude_detected), value="claude_code"),
+            questionary.Choice(_label("OpenAI Codex CLI  (OpenAI subscription)", codex_detected), value="codex_cli"),
+            questionary.Choice("Anthropic API  (API key, per-token billing)",                  value="anthropic_api"),
+            questionary.Choice("OpenAI API  (API key, per-token billing)",                     value="openai_api"),
+            questionary.Choice("None — raw transcripts only",                                  value="none"),
+            questionary.Separator(),
+            questionary.Choice("Cancel — no changes",                                          value=_BACK),
+        ],
+    )
+    if backend == _BACK:
+        ui.info("No changes made.")
+        return
+
+    ollama_model = current_model
+
+    if backend == "ollama":
+        models_data = _load_models()
+        ollama_cfg  = models_data.get("llm", {}).get("ollama", {})
+        rec         = ollama_cfg.get("recommended", "qwen2.5:7b")
+        alts        = ollama_cfg.get("alternatives", [])
+
+        print()
+
+        def _mlabel(name: str) -> str:
+            tags = []
+            if name == rec:
+                tags.append("recommended")
+            if name == current_model:
+                tags.append("current")
+            return name + (f"  ({', '.join(tags)})" if tags else "")
+
+        model_choices = [questionary.Choice(_mlabel(rec), value=rec)]
+        for a in alts:
+            model_choices.append(questionary.Choice(_mlabel(a), value=a))
+        model_choices += [questionary.Separator(), questionary.Choice("← Back", value=_BACK)]
+
+        model = _ask(questionary.select, "Which Ollama model?", choices=model_choices)
+        if model == _BACK:
+            ui.info("No changes made.")
+            return
+        ollama_model = model
+
+        # Offer to pull if not already downloaded
+        try:
+            result      = _sub.run(["ollama", "list"], capture_output=True, text=True)
+            already_pulled = ollama_model in result.stdout
+        except Exception:
+            already_pulled = False
+
+        if not already_pulled:
+            print()
+            pull = _ask(
+                questionary.select,
+                f"{ollama_model} isn't downloaded yet. Pull it now?",
+                choices=[
+                    questionary.Choice("Yes — download now",              value=True),
+                    questionary.Choice("No — I'll run `ollama pull` manually", value=False),
+                ],
+            )
+            if pull is True:
+                try:
+                    with ui.wheel_status(f"Downloading {ollama_model}..."):
+                        _sub.run(["ollama", "pull", ollama_model],
+                                 check=True, capture_output=True)
+                    ui.ok(f"{ollama_model} ready.")
+                except FileNotFoundError:
+                    ui.warn("Ollama not found. Install from https://ollama.com")
+                except _sub.CalledProcessError as e:
+                    ui.warn(f"Pull failed: {e}")
+
+    cfg["llm_backend"] = backend
+    cfg["ollama_model"] = ollama_model
+    save_config(cfg)
+
+    print()
+    ui.ok(f"Backend → {backend}")
+    if backend == "ollama":
+        ui.ok(f"Model   → {ollama_model}")
+    print()

@@ -158,8 +158,7 @@ def process_file(audio_path: Path, output_dir: Path,
         return
 
     try:
-        with ui.wheel_status("Hammy is running on the wheel..."):
-            transcript, duration = transcribe_audio(audio_path, config)
+        transcript, duration = transcribe_audio(audio_path, config)
     except Exception as e:
         ui.err(f"Error transcribing {audio_path.name}: {e}")
         return
@@ -286,8 +285,7 @@ def main() -> None:
         for audio_path in audio_files:
             process_file(audio_path, args.output, llm_backend, config)
 
-        print()
-        ui.ok(f"All done! Notes are in the stash: {args.output}")
+        ui.print_outro(len(audio_files), str(args.output))
 
     finally:
         if ollama_proc is not None:

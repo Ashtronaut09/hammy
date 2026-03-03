@@ -26,7 +26,7 @@ Organize the content into logical topic sections. Use ### headings for each topi
 
 Guidelines:
 - Be concise but thorough. Don't pad with filler.
-- Preserve important details, numbers, dates, names, and places.
+- Preserve exact names, direct quotes, phone numbers, specific product names, and all concrete details verbatim — do not generalize or paraphrase specifics.
 - If multiple speakers are present, attribute key statements.
 - Capture the emotional and reflective tone — these are personal recordings, not business meetings.
 - Use plain language. Don't add commentary or opinions.

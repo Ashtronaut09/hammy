@@ -107,7 +107,9 @@ platforms:
 
 llm:
   ollama:
-    recommended: llama3.2:3b
+    recommended: qwen2.5:7b
     alternatives:
+      - llama3.1:8b
+      - qwen2.5:14b
       - mistral:7b
       - gemma3:4b

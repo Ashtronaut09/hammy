@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from math import ceil
 
 # ── ANSI codes ───────────────────────────────────────────────────────────────
 def _rgb(r: int, g: int, b: int) -> str:
@@ -87,6 +88,113 @@ def wheel_status(message: str):
         stop_event.set()
         t.join()
 
+# ── Parakeet chunk progress ───────────────────────────────────────────────────
+_SPIN_FRAMES  = ['|', '/', '-', '\\']
+_SPIN_COLORS  = [PINK, LAVENDER, SOFT_PINK, CREAM, PINK, LAVENDER]
+_BAR_W        = 18
+_SCAN_W       = 3
+_WIN          = 4   # lines always on screen — never changes, so cursor math is trivial
+
+
+def _progress_lines(active, total, frame, label):
+    """Build exactly _WIN lines for the sliding window.
+
+    active  — 1-based index of the chunk currently processing (0 = not started)
+    total   — total chunk count once known, else None
+    """
+    col  = _SPIN_COLORS[frame % len(_SPIN_COLORS)]
+    spin = _SPIN_FRAMES[frame % len(_SPIN_FRAMES)]
+
+    win_start = max(1, active - 1) if active > 0 else 1
+    lines = []
+    for i in range(_WIN):
+        n = win_start + i
+
+        if total is not None and n > total:
+            # Past the end — blank padding so line count stays at _WIN
+            lines.append(f'  {LAVENDER} [{" " * _BAR_W}]{RESET}')
+            continue
+
+        if active == 0 or n > active:          # pending
+            bar  = LAVENDER + "░" * _BAR_W
+            lines.append(f'  {LAVENDER}·{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {SOFT_PINK}chunk {n}{RESET}')
+        elif n < active:                        # done
+            bar  = SUCCESS + "█" * _BAR_W
+            lines.append(f'  {SUCCESS}✓{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {SOFT_PINK}chunk {n}{RESET}')
+        else:                                   # active (n == active)
+            pos  = frame % (_BAR_W - _SCAN_W + 1)
+            bar  = LAVENDER + "░"*pos + col + "█"*_SCAN_W + LAVENDER + "░"*(_BAR_W - pos - _SCAN_W)
+            of   = f' of {total}' if total else ''
+            lines.append(f'  {col}{spin}{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {SOFT_PINK}chunk {n}{of}{RESET}  {CREAM}{label}{RESET}')
+    return lines
+
+
+@contextmanager
+def transcribe_progress(source_name: str):
+    """Fixed 4-bar sliding-window progress for parakeet chunked transcription.
+
+    Always occupies exactly _WIN lines — no growth, no cursor artifacts.
+    Yields a chunk_callback(current_samples, total_samples).
+    """
+    _lock  = threading.Lock()
+    _stop  = threading.Event()
+    _state = {"active": 0, "total": None}
+
+    def callback(current: int, total_samples: int) -> None:
+        with _lock:
+            _state["active"] += 1
+            if _state["total"] is None and current > 0:
+                # chunk_duration=30s, overlap=15s → step=15s
+                sr_est         = current / 30.0
+                step_samples   = 15.0 * sr_est
+                _state["total"] = max(_state["active"],
+                                      ceil(total_samples / step_samples))
+
+    def _spin() -> None:
+        frame = 0
+        label = (source_name[:20] + "…") if len(source_name) > 21 else source_name
+        drawn = False
+        while not _stop.is_set():
+            with _lock:
+                active, total = _state["active"], _state["total"]
+            lines = _progress_lines(active, total, frame, label)
+
+            if not drawn:
+                sys.stderr.write('\n'.join(lines))   # initial draw, no trailing \n
+                drawn = True
+            else:
+                # always _WIN lines — go up (_WIN-1) then overwrite all
+                sys.stderr.write(f'\r\033[{_WIN - 1}A')
+                for j, line in enumerate(lines):
+                    sys.stderr.write('\r\033[2K' + line)
+                    if j < _WIN - 1:
+                        sys.stderr.write('\n')
+            sys.stderr.flush()
+            frame += 1
+            time.sleep(0.08)
+
+        # cleanup: erase all _WIN lines and leave cursor where it started
+        if drawn:
+            sys.stderr.write(f'\r\033[{_WIN - 1}A')
+            for i in range(_WIN):
+                sys.stderr.write('\r\033[2K')
+                if i < _WIN - 1:
+                    sys.stderr.write('\n')
+            sys.stderr.write(f'\r\033[{_WIN - 1}A')
+            sys.stderr.flush()
+
+    t = threading.Thread(target=_spin, daemon=True)
+    t.start()
+    try:
+        yield callback
+    finally:
+        _stop.set()
+        t.join()
+
+
 # ── Output helpers ────────────────────────────────────────────────────────────
 def ok(msg: str) -> None:
     print(f'  {SUCCESS}✓{RESET} {SOFT_PINK}{msg}{RESET}', flush=True)
@@ -107,3 +215,25 @@ def section(title: str) -> None:
     left  = dashes // 2
     right = dashes - left
     print(f'\n{RULE_COL}{"─" * left}{PINK}{label}{RULE_COL}{"─" * right}{RESET}', flush=True)
+
+
+def print_outro(file_count: int, output_dir: str) -> None:
+    """Print the Hammy completion screen."""
+    p, l, g, c, r = PINK, LAVENDER, SUCCESS, CREAM, RESET
+    noun  = "file" if file_count == 1 else "files"
+    width = shutil.get_terminal_size(fallback=(80, 24)).columns
+    rule  = f'  {g}{"━" * (width - 4)}{r}'
+
+    print()
+    print(rule)
+    print()
+    print(f'  {l}  ╭─────╮{r}')
+    print(f'  {l} / ⊙   ⊙\\{r}  {l}(\\(\\{r}')
+    print(f'  {l}│  ╰───╯  │{r} {l}(≧ω≦){r}  {p}Wheel complete!{r}  {g}{file_count} {noun} stashed.{r}')
+    print(f'  {l} \\       /{r}  {l}o_(")("){r}')
+    print(f'  {l}  ╰─────╯{r}')
+    print()
+    print(f'  {ITALIC}{c}notes in the stash → {output_dir}{r}')
+    print()
+    print(rule)
+    print(flush=True)

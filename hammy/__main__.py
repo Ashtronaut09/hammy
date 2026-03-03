@@ -19,6 +19,11 @@ def main() -> None:
             run_check_command()
             return
 
+        if cmd == "models":
+            from hammy.setup_wizard import run_models_command
+            run_models_command()
+            return
+
         if cmd in ("-h", "--help"):
             _print_help()
             return
@@ -40,6 +45,7 @@ def _print_help() -> None:
     ui.print_splash()
     print("Usage:")
     print("  hammy setup          — interactive first-time setup wizard")
+    print("  hammy models         — switch LLM backend or Ollama model")
     print("  hammy check          — check for new model recommendations")
     print("  hammy [INPUT]        — transcribe audio (default: thewheel/ dir)")
     print()
