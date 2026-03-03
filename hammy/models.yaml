@@ -35,7 +35,7 @@ platforms:
     english:
       recommended:
         id: nvidia/parakeet-tdt-0.6b-v2
-        package: faster-whisper
+        package: parakeet-nemo
         size_gb: 1.2
         notes: "Fastest English ASR on NVIDIA. RTFx ~3380 at batch 128."
       alternatives:
