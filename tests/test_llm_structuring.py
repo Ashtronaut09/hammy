@@ -140,10 +140,15 @@ class TestStructureWithOllama:
             )
 
     def test_returns_output_on_success(self):
+        import json as _json
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"response": FAKE_LLM_OUTPUT}
         mock_resp.raise_for_status = MagicMock()
+        # Simulate Ollama streaming: one token line, then a done line
+        mock_resp.iter_lines.return_value = [
+            _json.dumps({"message": {"content": FAKE_LLM_OUTPUT}, "done": False}).encode(),
+            _json.dumps({"message": {"content": ""}, "done": True}).encode(),
+        ]
         with patch("hammy.llm.requests.post", return_value=mock_resp):
             result = structure_with_ollama(FAKE_TRANSCRIPT, "standup.m4a", "0:45", "2026-02-09", FAKE_PROMPT, "llama3.1:8b")
         assert result is not None and len(result) > 0, (

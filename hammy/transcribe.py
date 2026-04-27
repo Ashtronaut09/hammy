@@ -4,8 +4,15 @@ import os
 import shutil
 import subprocess
 import tempfile
+import warnings
 from pathlib import Path
 from typing import Optional
+
+# Suppress HF Hub "unauthenticated requests" warning — model is already cached locally
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
+import logging as _logging
+_logging.getLogger("huggingface_hub").setLevel(_logging.ERROR)
 
 from hammy import ui
 
@@ -14,6 +21,7 @@ SUPPORTED_EXTENSIONS = {
     ".webm", ".aiff", ".aifc", ".mp4", ".aac",
 }
 NEEDS_CONVERSION = {".aac", ".mp4", ".aifc", ".aiff", ".webm"}
+VIDEO_EXTENSIONS  = {".mp4", ".webm"}
 
 
 def transcribe_audio(audio_path: Path, config: dict) -> tuple[str, str]:

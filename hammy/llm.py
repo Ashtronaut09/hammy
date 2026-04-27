@@ -1,6 +1,7 @@
 """LLM backend dispatcher for Hammy."""
 
 import json
+import re
 import shutil
 import subprocess
 from typing import Optional
@@ -117,7 +118,8 @@ def structure_with_codex_cli(transcript: str, source_name: str,
 
 def structure_with_ollama(transcript: str, source_name: str,
                            duration: str, date_str: str,
-                           prompt: str, model: str) -> Optional[str]:
+                           prompt: str, model: str,
+                           progress: Optional[dict] = None) -> Optional[str]:
     """Invoke Ollama HTTP API."""
     user_content = (
         f"Metadata:\n"
@@ -135,7 +137,7 @@ def structure_with_ollama(transcript: str, source_name: str,
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": user_content},
                 ],
-                "options": {"num_ctx": 32768, "num_predict": 4096},
+                "options": {"num_ctx": 32768, "num_predict": 8192},
                 "stream": True,
             },
             stream=True,
@@ -143,14 +145,30 @@ def structure_with_ollama(transcript: str, source_name: str,
         )
         resp.raise_for_status()
         parts = []
+        in_think = False
         for raw in resp.iter_lines():
             if not raw:
                 continue
             data = json.loads(raw)
-            parts.append(data.get("message", {}).get("content", ""))
+            token = data.get("message", {}).get("content", "")
+            parts.append(token)
+            if progress is not None:
+                text_so_far = "".join(parts)
+                if "<think>" in text_so_far and "</think>" not in text_so_far:
+                    in_think = True
+                    progress["phase"] = "thinking"
+                elif in_think and "</think>" in text_so_far:
+                    in_think = False
+                    progress["phase"] = "writing"
+                    progress["tokens"] = 0  # reset count for writing phase
+                elif not in_think:
+                    progress["phase"] = "writing"
+                progress["tokens"] = progress.get("tokens", 0) + 1
             if data.get("done"):
                 break
         output = "".join(parts).strip()
+        # Strip thinking tags (Qwen 3 emits <think>...</think> blocks)
+        output = re.sub(r"<think>.*?</think>", "", output, flags=re.DOTALL).strip()
         if not output:
             ui.warn("Ollama returned empty output.")
             return None

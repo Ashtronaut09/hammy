@@ -238,12 +238,29 @@ class TestSkipResumeIntegration:
         done = output_dir / f"{date_str}_meeting2.md"
         done.write_text("# Already processed")
 
-        ctx, mock_mod = _mock_whisper()
-        with ctx:
-            with patch("sys.argv", ["hammy", str(audio_dir),
-                                    "--output", str(output_dir), "--llm", "none"]):
-                from hammy import main
-                main()
+        transcribe_calls = []
+
+        def fake_transcribe(audio_path, config):
+            transcribe_calls.append(audio_path.name)
+            return "Hello this is a test transcript.", "0:10"
+
+        fake_config = {
+            "wheel_dir": str(audio_dir),
+            "stash_dir": str(output_dir),
+            "platform": "mac_silicon",
+            "transcription_package": "mlx-whisper",
+            "transcription_model": "mlx-community/whisper-large-v3-turbo",
+            "ollama_model": "llama3.1:8b",
+            "llm_backend": None,
+            "update_check_enabled": False,
+        }
+
+        with patch("hammy.core.transcribe_audio", side_effect=fake_transcribe), \
+             patch("hammy.core.load_config", return_value=fake_config), \
+             patch("sys.argv", ["hammy", str(audio_dir),
+                                "--output", str(output_dir), "--llm", "none"]):
+            from hammy import main
+            main()
 
         # Should have 3 .md files total (1 pre-existing + 2 new)
         mds = list(output_dir.glob("*.md"))
@@ -260,9 +277,12 @@ class TestSkipResumeIntegration:
             f"The skip check should prevent reprocessing completed files."
         )
 
-        # Whisper should have been called exactly 2 times (meeting1 + meeting3)
-        assert mock_mod.transcribe.call_count == 2, (
-            f"Expected whisper to be called 2 times (skipping meeting2). "
-            f"Called {mock_mod.transcribe.call_count} times. "
-            f"The skip check should prevent calling whisper for completed files."
+        # transcribe_audio should have been called exactly 2 times (meeting1 + meeting3)
+        assert len(transcribe_calls) == 2, (
+            f"Expected transcribe_audio to be called 2 times (skipping meeting2). "
+            f"Called {len(transcribe_calls)} times on: {transcribe_calls}. "
+            f"The skip check should prevent transcribing completed files."
+        )
+        assert "meeting2.m4a" not in transcribe_calls, (
+            f"meeting2.m4a should have been skipped but was transcribed."
         )

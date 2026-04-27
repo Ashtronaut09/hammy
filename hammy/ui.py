@@ -47,19 +47,34 @@ _REEL_FRAMES = [
     ["  ╭─────╮", " /    ╱  \\", "│ ──⊙     │", " \\    ╲  /", "  ╰─────╯"],
 ]
 _REEL_H      = len(_REEL_FRAMES[0])   # 5 lines tall
-_REEL_COLORS = [PINK, LAVENDER, SOFT_PINK, LAVENDER, PINK, CREAM]
+# Warm amber/gold palette — visually distinct from transcription's pink/lavender
+_AMBER    = _rgb(255, 191, 105)  # warm amber
+_GOLD     = _rgb(240, 220, 130)  # soft gold
+_PEACH    = _rgb(255, 160, 122)  # light peach
+_REEL_COLORS = [_AMBER, _GOLD, _PEACH, _GOLD, _AMBER, CREAM]
 _CLR         = '\033[2K\r'            # erase line + return to col 0
 
 @contextmanager
-def wheel_status(message: str):
-    """Spin a reel animation while work is happening."""
+def wheel_status(message: str, live_status=None):
+    """Spin a reel animation while work is happening.
+
+    live_status: optional callable returning a string (e.g. token count)
+                 to display below the reel. Called from the spinner thread.
+    """
     stop_event = threading.Event()
+    _start = time.time()
+
+    def _status_line():
+        if live_status is None:
+            elapsed = int(time.time() - _start)
+            return f'{LAVENDER}{elapsed}s{RESET}'
+        return live_status(_start)
 
     def _draw(frame, color):
         for j, line in enumerate(frame):
             sys.stderr.write(_CLR)
             if j == 2:  # centre row — hang the message to the right
-                sys.stderr.write(f'{color}{line}{RESET}  {SOFT_PINK}{message}{RESET}\n')
+                sys.stderr.write(f'{color}{line}{RESET}  {_GOLD}{message}{RESET}  {_status_line()}\n')
             else:
                 sys.stderr.write(f'{color}{line}{RESET}\n')
 
@@ -190,6 +205,115 @@ def transcribe_progress(source_name: str):
     t.start()
     try:
         yield callback
+    finally:
+        _stop.set()
+        t.join()
+
+
+# ── LLM token progress ───────────────────────────────────────────────────────
+_LLM_SPIN_COLORS = [_AMBER, _GOLD, _PEACH, _GOLD, _AMBER, CREAM]
+_TOKENS_PER_CHUNK = 100
+
+
+def _llm_progress_lines(active, total, frame, phase_label):
+    """Build exactly _WIN lines for LLM token progress.
+
+    Same sliding-window pattern as transcription, warm color palette.
+    active  — 1-based chunk index (0 = not started)
+    total   — estimated total chunks, or None
+    """
+    col  = _LLM_SPIN_COLORS[frame % len(_LLM_SPIN_COLORS)]
+    spin = _SPIN_FRAMES[frame % len(_SPIN_FRAMES)]
+
+    win_start = max(1, active - 1) if active > 0 else 1
+    lines = []
+    for i in range(_WIN):
+        n = win_start + i
+
+        if total is not None and n > total:
+            lines.append(f'  {LAVENDER} [{" " * _BAR_W}]{RESET}')
+            continue
+
+        if active == 0 or n > active:          # pending
+            bar = LAVENDER + "░" * _BAR_W
+            lines.append(f'  {LAVENDER}·{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {CREAM}{n * _TOKENS_PER_CHUNK} tokens{RESET}')
+        elif n < active:                        # done
+            bar = SUCCESS + "█" * _BAR_W
+            lines.append(f'  {SUCCESS}✓{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {CREAM}{n * _TOKENS_PER_CHUNK} tokens{RESET}')
+        else:                                   # active (n == active)
+            pos  = frame % (_BAR_W - _SCAN_W + 1)
+            bar  = (LAVENDER + "░" * pos + col + "█" * _SCAN_W
+                    + LAVENDER + "░" * (_BAR_W - pos - _SCAN_W))
+            of   = f' of ~{total}' if total else ''
+            lines.append(f'  {col}{spin}{RESET} {LAVENDER}[{bar}{LAVENDER}]{RESET}'
+                         f'  {CREAM}chunk {n}{of}{RESET}  {_GOLD}{phase_label}{RESET}')
+    return lines
+
+
+@contextmanager
+def llm_progress(message: str, progress: dict):
+    """Chunked progress bars for LLM generation, matching transcription style.
+
+    progress dict is updated by the LLM streaming code:
+        progress["tokens"] — token count (resets on phase change)
+        progress["phase"]  — "loading" | "thinking" | "writing"
+    """
+    _stop = threading.Event()
+
+    _PHASE_LABELS = {
+        "loading":  "processing input",
+        "thinking": "reasoning",
+        "writing":  "writing notes",
+    }
+
+    def _spin() -> None:
+        frame = 0
+        drawn = False
+        prev_chunk = 0
+        while not _stop.is_set():
+            tokens = progress.get("tokens", 0)
+            phase  = progress.get("phase", "loading")
+            active = tokens // _TOKENS_PER_CHUNK + (1 if tokens > 0 else 0)
+            label  = _PHASE_LABELS.get(phase, phase)
+
+            # Estimate total chunks (only during writing phase)
+            total = None
+            if phase == "writing" and active > 0:
+                total = max(active + 2, 20)  # ~2000 tokens typical
+
+            lines = _llm_progress_lines(active, total, frame, label)
+
+            if not drawn:
+                # Print header message first
+                sys.stderr.write(f'  {_GOLD}{message}{RESET}\n')
+                sys.stderr.write('\n'.join(lines))
+                drawn = True
+            else:
+                sys.stderr.write(f'\r\033[{_WIN - 1}A')
+                for j, line in enumerate(lines):
+                    sys.stderr.write('\r\033[2K' + line)
+                    if j < _WIN - 1:
+                        sys.stderr.write('\n')
+            sys.stderr.flush()
+            frame += 1
+            time.sleep(0.08)
+
+        # cleanup: erase header + _WIN lines
+        if drawn:
+            sys.stderr.write(f'\r\033[{_WIN}A')
+            for i in range(_WIN + 1):
+                sys.stderr.write('\r\033[2K')
+                if i < _WIN:
+                    sys.stderr.write('\n')
+            sys.stderr.write(f'\r\033[{_WIN}A')
+            sys.stderr.flush()
+
+    t = threading.Thread(target=_spin, daemon=True)
+    t.start()
+    try:
+        yield
     finally:
         _stop.set()
         t.join()

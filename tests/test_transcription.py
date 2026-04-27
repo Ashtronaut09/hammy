@@ -182,27 +182,30 @@ FAKE_NEMO_SEGMENTS = [
 
 # ── Mock helpers ──────────────────────────────────────────────────────────────
 
-def _mock_parakeet_mlx():
-    """Inject a fake parakeet_mlx module matching the real API:
-      model = parakeet_mlx.from_pretrained(model_id)
-      result = model.transcribe(path)  -> AlignedResult with .sentences
-    Each sentence has .text, .start, .end attributes.
-    """
-    mock_module = MagicMock()
+def _mock_parakeet_mlx(sentences=None):
+    """Inject a fake parakeet_mlx module.
 
-    fake_sentences = []
-    for seg in FAKE_WHISPER_RESULT["segments"]:
-        s = MagicMock()
-        s.start = seg["start"]
-        s.end   = seg["end"]
-        s.text  = seg["text"].strip()
-        fake_sentences.append(s)
+    The code does:
+        model = parakeet_mlx.from_pretrained(model_id)
+        result = model.transcribe(path, chunk_duration=..., chunk_callback=...)
+        for sent in result.sentences: sent.start, sent.end, sent.text
+    """
+    if sentences is None:
+        sentences = []
+        for seg in FAKE_WHISPER_RESULT["segments"]:
+            s = MagicMock()
+            s.start = seg["start"]
+            s.end   = seg["end"]
+            s.text  = seg["text"].strip()
+            sentences.append(s)
 
     fake_result = MagicMock()
-    fake_result.sentences = fake_sentences
+    fake_result.sentences = sentences
 
     mock_model = MagicMock()
     mock_model.transcribe.return_value = fake_result
+
+    mock_module = MagicMock()
     mock_module.from_pretrained.return_value = mock_model
 
     return patch.dict(sys.modules, {"parakeet_mlx": mock_module}), mock_module
@@ -264,21 +267,26 @@ def _mock_nemo(segments=None):
 class TestTranscribeParakeetMlx:
     """_transcribe_parakeet_mlx() via transcribe_audio() with parakeet-mlx config."""
 
-    def test_loads_model_with_from_pretrained(self):
+    def test_calls_parakeet_transcribe(self):
+        ctx, mock_mod = _mock_parakeet_mlx()
+        with ctx:
+            transcribe_audio(Path("test.m4a"), PARAKEET_MLX_CONFIG)
+        mock_mod.from_pretrained.return_value.transcribe.assert_called_once()
+
+    def test_passes_file_path(self):
+        ctx, mock_mod = _mock_parakeet_mlx()
+        with ctx:
+            transcribe_audio(Path("standup.m4a"), PARAKEET_MLX_CONFIG)
+        call_args = mock_mod.from_pretrained.return_value.transcribe.call_args
+        assert "standup.m4a" in str(call_args)
+
+    def test_passes_model_id(self):
         ctx, mock_mod = _mock_parakeet_mlx()
         with ctx:
             transcribe_audio(Path("test.m4a"), PARAKEET_MLX_CONFIG)
         mock_mod.from_pretrained.assert_called_once_with(
             PARAKEET_MLX_CONFIG["transcription_model"]
         )
-
-    def test_calls_model_transcribe_with_file_path(self):
-        ctx, mock_mod = _mock_parakeet_mlx()
-        with ctx:
-            transcribe_audio(Path("standup.m4a"), PARAKEET_MLX_CONFIG)
-        mock_model = mock_mod.from_pretrained.return_value
-        mock_model.transcribe.assert_called_once()
-        assert "standup.m4a" in str(mock_model.transcribe.call_args)
 
     def test_returns_transcript_with_timestamps(self):
         ctx, _ = _mock_parakeet_mlx()

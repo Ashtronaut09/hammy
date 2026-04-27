@@ -5,12 +5,13 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 from hammy import ui
 from hammy.config import load_config
-from hammy.transcribe import SUPPORTED_EXTENSIONS, transcribe_audio
+from hammy.transcribe import SUPPORTED_EXTENSIONS, VIDEO_EXTENSIONS, transcribe_audio
 from hammy.llm import (
     get_auto_backend,
     ensure_ollama,
@@ -32,13 +33,24 @@ except Exception:
     )
 
 
-def load_prompt(config: dict) -> str:
-    """Load prompt: workspace override first, then bundled default."""
+def load_prompt(config: dict, is_video: bool = True) -> str:
+    """Load prompt: workspace override first, then bundled default.
+
+    For audio-only files, strips the YouTube Chapters section.
+    """
     workspace = Path(config["stash_dir"]).parent
     user_prompt = workspace / "prompt.txt"
-    if user_prompt.exists():
-        return user_prompt.read_text(encoding="utf-8").strip()
-    return _BUNDLED_PROMPT.strip()
+    text = (user_prompt.read_text(encoding="utf-8").strip()
+            if user_prompt.exists() else _BUNDLED_PROMPT.strip())
+    if not is_video:
+        import re as _re
+        text = _re.sub(
+            r"## YouTube Chapters.*?(?=## |\Z)",
+            "",
+            text,
+            flags=_re.DOTALL,
+        ).strip()
+    return text
 
 
 def extract_date_from_filename(stem: str) -> str:
@@ -98,13 +110,20 @@ def find_audio_files(path: str) -> list[Path]:
 
 
 def build_raw_output(transcript: str, source_name: str,
-                     duration: str, date_str: str) -> str:
+                     duration: str, date_str: str, is_video: bool = False) -> str:
+    chapters_block = (
+        "## YouTube Chapters\n\n"
+        "_Not generated (no LLM backend). "
+        "Re-run with an LLM to produce chapters._\n\n"
+        "---\n\n"
+    ) if is_video else ""
     return (
         f"# Transcript: {source_name}\n\n"
         f"**Date:** {date_str}\n"
         f"**Source:** {source_name}\n"
         f"**Duration:** {duration}\n\n"
         f"---\n\n"
+        f"{chapters_block}"
         f"## Raw Transcript\n\n"
         f"{transcript}\n"
     )
@@ -115,9 +134,10 @@ def append_raw_transcript(structured_notes: str, transcript: str) -> str:
 
 
 def _run_llm(backend: str, transcript: str, source_name: str,
-             duration: str, date_str: str, config: dict) -> str | None:
+             duration: str, date_str: str, config: dict,
+             progress: dict | None = None, is_video: bool = True) -> str | None:
     """Dispatch to the correct LLM backend."""
-    prompt = load_prompt(config)
+    prompt = load_prompt(config, is_video=is_video)
     kwargs = dict(
         transcript=transcript, source_name=source_name,
         duration=duration, date_str=date_str, prompt=prompt,
@@ -127,7 +147,8 @@ def _run_llm(backend: str, transcript: str, source_name: str,
     if backend == "codex_cli":
         return structure_with_codex_cli(**kwargs)
     if backend == "ollama":
-        return structure_with_ollama(**kwargs, model=config.get("ollama_model", "llama3.2:3b"))
+        return structure_with_ollama(**kwargs, model=config.get("ollama_model", "llama3.2:3b"),
+                                     progress=progress)
     if backend == "anthropic_api":
         key = config.get("anthropic_api_key") or ""
         if not key:
@@ -146,6 +167,7 @@ def _run_llm(backend: str, transcript: str, source_name: str,
 def process_file(audio_path: Path, output_dir: Path,
                  llm_backend: str | None, config: dict) -> None:
     """Process a single audio file: transcribe and optionally structure."""
+    is_video = audio_path.suffix.lower() in VIDEO_EXTENSIONS
     date_str = extract_date_from_filename(audio_path.stem)
     source_name = audio_path.name
     output_filename = f"{date_str}_{audio_path.stem}.md"
@@ -157,17 +179,28 @@ def process_file(audio_path: Path, output_dir: Path,
         ui.info("↷ Already stashed — skipping.")
         return
 
-    try:
-        transcript, duration = transcribe_audio(audio_path, config)
-    except Exception as e:
-        ui.err(f"Error transcribing {audio_path.name}: {e}")
-        return
+    # Check for a saved transcript from a previously interrupted run
+    transcript_cache = output_path.with_suffix(".transcript")
+    if transcript_cache.exists():
+        cached = transcript_cache.read_text(encoding="utf-8").split("\n", 1)
+        duration = cached[0].strip()
+        transcript = cached[1] if len(cached) > 1 else ""
+        ui.info(f"↻ Resuming from saved transcript — {duration}")
+    else:
+        try:
+            transcript, duration = transcribe_audio(audio_path, config)
+        except Exception as e:
+            ui.err(f"Error transcribing {audio_path.name}: {e}")
+            return
 
-    if not transcript:
-        ui.warn("No transcript produced — skipping.")
-        return
+        if not transcript:
+            ui.warn("No transcript produced — skipping.")
+            return
 
-    ui.ok(f"Transcribed — {duration}")
+        # Save transcript immediately so an interrupted LLM step can resume
+        output_dir.mkdir(parents=True, exist_ok=True)
+        transcript_cache.write_text(f"{duration}\n{transcript}", encoding="utf-8")
+        ui.ok(f"Transcribed — {duration}")
 
     structured = None
     if llm_backend and llm_backend != "none":
@@ -178,30 +211,46 @@ def process_file(audio_path: Path, output_dir: Path,
             "anthropic_api": "Calling the Anthropic API...",
             "openai_api":  "Calling the OpenAI API...",
         }.get(llm_backend, "Structuring notes...")
-        with ui.wheel_status(spinner_msg):
-            structured = _run_llm(
-                llm_backend, transcript, source_name, duration, date_str, config
-            )
+
+        if llm_backend == "ollama":
+            progress = {"tokens": 0, "phase": "loading"}
+            with ui.llm_progress(spinner_msg, progress):
+                structured = _run_llm(
+                    llm_backend, transcript, source_name, duration, date_str,
+                    config, progress=progress, is_video=is_video,
+                )
+        else:
+            with ui.wheel_status(spinner_msg):
+                structured = _run_llm(
+                    llm_backend, transcript, source_name, duration, date_str,
+                    config, is_video=is_video,
+                )
 
     if structured:
         final_output = append_raw_transcript(structured, transcript)
     else:
         if llm_backend and llm_backend != "none":
             ui.warn("LLM structuring failed — saving raw transcript only.")
-        final_output = build_raw_output(transcript, source_name, duration, date_str)
+        final_output = build_raw_output(transcript, source_name, duration, date_str, is_video=is_video)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     partial_path = output_path.with_suffix(".md.partial")
     partial_path.write_text(final_output, encoding="utf-8")
     partial_path.rename(output_path)
+    # Clean up transcript cache now that the final .md is written
+    if transcript_cache.exists():
+        transcript_cache.unlink()
     ui.ok(f"Notes stashed: {output_path.name}")
 
-    dest = output_dir / audio_path.name
-    try:
-        shutil.move(str(audio_path), str(dest))
-        ui.ok("Audio tucked into the stash.")
-    except (PermissionError, OSError):
-        ui.warn("Couldn't move audio (Dropbox may have it locked) — notes saved, audio stays put.")
+    # Only move the file into stash if it came from the wheel directory
+    wheel_dir = Path(config["wheel_dir"]) if config.get("wheel_dir") else None
+    if wheel_dir and audio_path.parent.resolve() == wheel_dir.resolve():
+        dest = output_dir / audio_path.name
+        try:
+            shutil.move(str(audio_path), str(dest))
+            ui.ok("Audio tucked into the stash.")
+        except (PermissionError, OSError):
+            ui.warn("Couldn't move audio (Dropbox may have it locked) — notes saved, audio stays put.")
 
 
 def main() -> None:
